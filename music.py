@@ -1,6 +1,3 @@
-# app.py
-# Para executar, rode no terminal: streamlit run app.py
-
 import streamlit as st
 import yt_dlp
 import os
@@ -28,7 +25,7 @@ def baixar_video(url, qualidade, pasta_destino=DOWNLOAD_DIR):
     """Baixa um vídeo do YouTube com a qualidade especificada."""
     try:
         ydl_opts = {
-            'format': f'best[height<={qualidade[:-1]}]/best' if qualidade != 'best' else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'format': f'bestvideo[height<={qualidade[:-1]}]+bestaudio[ext=m4a]/best[ext=mp4]/best' if qualidade != 'best' else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'outtmpl': os.path.join(pasta_destino, '%(title)s.%(ext)s'),
             'noplaylist': True,
             'merge_output_format': 'mp4'
@@ -153,7 +150,7 @@ else:
     # Exibir a lista de arquivos
     df_files = st.dataframe(
         [
-            {"nome": os.path.basename(f), "tamanho (MB)": os.path.getsize(f) / (1024 * 1024):.2f}
+            {"nome": os.path.basename(f), "tamanho (MB)": f"{os.path.getsize(f) / (1024 * 1024):.2f}"}
             for f in arquivos_baixados
         ],
         hide_index=True,
