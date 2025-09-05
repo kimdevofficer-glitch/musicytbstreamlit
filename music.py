@@ -1,182 +1,328 @@
 import streamlit as st
-import yt_dlp
+import json
 import os
-import zipfile
-import glob
-import re
+import requests
+from datetime import datetime, timedelta
+import yt_dlp
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import time
+import tempfile
+import subprocess
 
-# ==========================================
-# CONFIGURAÇÃO E FUNÇÕES AUXILIARES
-# ==========================================
-
-# Use um diretório de cache para evitar que o Streamlit remova os arquivos
-DOWNLOAD_DIR = "downloads"
-if not os.path.exists(DOWNLOAD_DIR):
-    os.makedirs(DOWNLOAD_DIR)
-
-# Função para sanitizar nomes de arquivos
-def sanitize_filename(name):
-    """Remove caracteres inválidos para nome de arquivo."""
-    return re.sub(r'[\\/:*?"<>|]', '', name)
-
-# Função para baixar vídeo
-@st.cache_data(show_spinner=False)
-def baixar_video(url, qualidade, pasta_destino=DOWNLOAD_DIR):
-    """Baixa um vídeo do YouTube com a qualidade especificada."""
-    try:
-        ydl_opts = {
-            'format': f'bestvideo[height<={qualidade[:-1]}]+bestaudio[ext=m4a]/best[ext=mp4]/best' if qualidade != 'best' else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'outtmpl': os.path.join(pasta_destino, '%(title)s.%(ext)s'),
-            'noplaylist': True,
-            'merge_output_format': 'mp4'
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            file_name = ydl.prepare_filename(info).replace('.webm', '.mp4')
-            st.info(f"Baixando **{info.get('title', '...')[:50]}**...")
-            ydl.download([url])
-        st.success("Download do vídeo concluído!")
-        return file_name
-    except Exception as e:
-        st.error(f"Erro ao baixar o vídeo: {e}")
-        return None
-
-# Função para baixar áudio
-@st.cache_data(show_spinner=False)
-def baixar_audio(url, pasta_destino=DOWNLOAD_DIR):
-    """Baixa apenas o áudio em MP3 de um vídeo do YouTube."""
-    try:
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': os.path.join(pasta_destino, '%(title)s.%(ext)s'),
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'noplaylist': True,
-            'verbose': False,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            file_name_mp3 = os.path.join(pasta_destino, f"{sanitize_filename(info.get('title'))}.mp3")
-            st.info(f"Baixando **{info.get('title', '...')[:50]}** em MP3...")
-            ydl.download([url])
-        st.success("Download do áudio concluído!")
-        return file_name_mp3
-    except Exception as e:
-        st.error(f"Erro ao baixar o áudio: {e}")
-        return None
-
-def listar_arquivos(pasta=DOWNLOAD_DIR):
-    """Retorna uma lista de arquivos baixados."""
-    return glob.glob(os.path.join(pasta, "*.*"))
-
-def criar_zip(arquivos, nome_zip):
-    """Cria um arquivo ZIP com os arquivos listados."""
-    try:
-        with zipfile.ZipFile(nome_zip, 'w') as zf:
-            for file in arquivos:
-                zf.write(file, os.path.basename(file))
-        return nome_zip
-    except Exception as e:
-        st.error(f"Erro ao criar o ZIP: {e}")
-        return None
-
-# ==========================================
-# INTERFACE DO STREAMLIT
-# ==========================================
-
-st.set_page_config(
-    page_title="YouTube Downloader",
-    page_icon="🎬",
-    layout="centered"
-)
-
-st.title("🎬 YouTube Downloader Interativo")
-st.markdown("""
-Esta é uma ferramenta simples para baixar vídeos e áudios do YouTube.
-""")
-
-with st.expander("ℹ️ Como usar"):
-    st.markdown("""
-    1.  Cole a URL do vídeo do YouTube no campo abaixo.
-    2.  Escolha se deseja baixar o vídeo (MP4) ou apenas o áudio (MP3).
-    3.  Clique em **Baixar**.
-    4.  Após o download, você poderá reproduzir o arquivo ou criar um arquivo ZIP para baixar tudo de uma vez.
-    """)
-
-# --- Entrada de URL ---
-url = st.text_input("🔗 URL do YouTube", help="Ex: https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-
-if url:
-    # --- Opções de Download ---
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Opções de Vídeo")
-        qualidade_video = st.selectbox(
-            "Qualidade do Vídeo",
-            ("720p", "480p", "360p", "1080p", "best"),
-            index=0,
-            help="720p é o recomendado para um bom balanço entre qualidade e tamanho."
-        )
-        if st.button("⬇️ Baixar Vídeo"):
-            with st.spinner("Baixando vídeo..."):
-                caminho_video = baixar_video(url, qualidade_video)
-                if caminho_video:
-                    st.video(caminho_video)
-
-    with col2:
-        st.subheader("Opções de Áudio")
-        st.markdown("_(MP3 de alta qualidade)_")
-        if st.button("🎶 Baixar Áudio"):
-            with st.spinner("Baixando áudio..."):
-                caminho_audio = baixar_audio(url)
-                if caminho_audio:
-                    st.audio(caminho_audio)
-else:
-    st.info("👆 Por favor, insira uma URL para começar.")
-
-# --- Gerenciar downloads ---
-st.markdown("---")
-st.header("📂 Downloads Concluídos")
-arquivos_baixados = listar_arquivos()
-
-if not arquivos_baixados:
-    st.info("Nenhum arquivo baixado ainda.")
-else:
-    # Exibir a lista de arquivos
-    df_files = st.dataframe(
-        [
-            {"nome": os.path.basename(f), "tamanho (MB)": f"{os.path.getsize(f) / (1024 * 1024):.2f}"}
-            for f in arquivos_baixados
-        ],
-        hide_index=True,
-    )
+class CookieManager:
+    def __init__(self):
+        self.cookies_file = "music_cookies.json"
+        self.session = requests.Session()
     
-    col3, col4 = st.columns(2)
-    with col3:
-        if st.button("📦 Criar ZIP de todos os arquivos"):
-            zip_filename = "downloads.zip"
-            with st.spinner("Criando arquivo ZIP..."):
-                caminho_zip = criar_zip(arquivos_baixados, zip_filename)
-                if caminho_zip:
-                    st.success(f"Arquivo ZIP criado: `{zip_filename}`")
-                    st.download_button(
-                        label="Clique para baixar o ZIP",
-                        data=open(caminho_zip, 'rb').read(),
-                        file_name=zip_filename,
-                        mime='application/zip',
-                    )
+    def save_cookies(self, cookies, service_name):
+        """Salva cookies para um serviço específico"""
+        if os.path.exists(self.cookies_file):
+            with open(self.cookies_file, 'r') as f:
+                all_cookies = json.load(f)
+        else:
+            all_cookies = {}
+        
+        all_cookies[service_name] = {
+            'cookies': cookies,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        with open(self.cookies_file, 'w') as f:
+            json.dump(all_cookies, f, indent=2)
+    
+    def load_cookies(self, service_name):
+        """Carrega cookies de um serviço específico"""
+        if not os.path.exists(self.cookies_file):
+            return None
+        
+        with open(self.cookies_file, 'r') as f:
+            all_cookies = json.load(f)
+        
+        if service_name in all_cookies:
+            cookie_data = all_cookies[service_name]
+            # Verifica se os cookies não estão muito antigos (30 dias)
+            timestamp = datetime.fromisoformat(cookie_data['timestamp'])
+            if datetime.now() - timestamp < timedelta(days=30):
+                return cookie_data['cookies']
+        
+        return None
+    
+    def extract_cookies_selenium(self, service_url, service_name):
+        """Extrai cookies usando Selenium"""
+        try:
+            options = Options()
+            options.add_argument('--headless=False')  # Mostra o navegador para login
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            
+            driver = webdriver.Chrome(options=options)
+            driver.get(service_url)
+            
+            st.info(f"Navegador aberto para {service_name}. Faça login e pressione Enter aqui quando terminar.")
+            
+            # Aguarda o usuário fazer login
+            user_input = st.text_input("Pressione Enter após fazer login no navegador:", key=f"login_{service_name}")
+            
+            if user_input is not None:
+                cookies = driver.get_cookies()
+                self.save_cookies(cookies, service_name)
+                driver.quit()
+                st.success(f"Cookies salvos para {service_name}!")
+                return cookies
+            
+        except Exception as e:
+            st.error(f"Erro ao extrair cookies: {str(e)}")
+            return None
+    
+    def import_browser_cookies(self, service_name, browser='chrome'):
+        """Importa cookies diretamente do navegador"""
+        try:
+            # Para YouTube, usa yt-dlp para extrair cookies
+            if service_name.lower() in ['youtube', 'youtube music']:
+                cookies_file = f"cookies_{service_name.lower().replace(' ', '_')}.txt"
+                
+                # Comando para extrair cookies do navegador
+                cmd = f"yt-dlp --cookies-from-browser {browser} --cookies {cookies_file} --skip-download 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'"
+                
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                
+                if os.path.exists(cookies_file):
+                    st.success(f"Cookies do {browser} importados com sucesso!")
+                    return cookies_file
+                else:
+                    st.error("Falha ao importar cookies do navegador")
+                    
+        except Exception as e:
+            st.error(f"Erro ao importar cookies: {str(e)}")
+        
+        return None
 
-    with col4:
-        if st.button("🗑️ Limpar pasta de downloads"):
-            for file in arquivos_baixados:
-                os.remove(file)
-            st.success("Pasta de downloads limpa!")
-            st.rerun()
+class MusicPlayer:
+    def __init__(self):
+        self.cookie_manager = CookieManager()
+        self.ydl_opts = {
+            'format': 'bestaudio/best',
+            'noplaylist': True,
+            'extract_flat': False,
+        }
+    
+    def setup_youtube_cookies(self):
+        """Configura cookies para YouTube"""
+        cookies = self.cookie_manager.load_cookies('youtube')
+        if cookies:
+            # Converte cookies para formato yt-dlp
+            cookies_file = "youtube_cookies.txt"
+            self.convert_cookies_to_netscape(cookies, cookies_file)
+            self.ydl_opts['cookiefile'] = cookies_file
+            return True
+        return False
+    
+    def convert_cookies_to_netscape(self, cookies, filename):
+        """Converte cookies JSON para formato Netscape"""
+        with open(filename, 'w') as f:
+            f.write("# Netscape HTTP Cookie File\n")
+            for cookie in cookies:
+                domain = cookie.get('domain', '')
+                flag = 'TRUE' if domain.startswith('.') else 'FALSE'
+                path = cookie.get('path', '/')
+                secure = 'TRUE' if cookie.get('secure', False) else 'FALSE'
+                expiration = cookie.get('expiry', 0)
+                name = cookie.get('name', '')
+                value = cookie.get('value', '')
+                
+                f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expiration}\t{name}\t{value}\n")
+    
+    def search_music(self, query, max_results=5):
+        """Pesquisa música no YouTube"""
+        try:
+            search_opts = self.ydl_opts.copy()
+            search_opts.update({
+                'quiet': True,
+                'extract_flat': True,
+                'default_search': 'ytsearch' + str(max_results) + ':'
+            })
+            
+            with yt_dlp.YoutubeDL(search_opts) as ydl:
+                search_results = ydl.extract_info(query, download=False)
+                
+                results = []
+                if 'entries' in search_results:
+                    for entry in search_results['entries']:
+                        results.append({
+                            'title': entry.get('title', 'Título não disponível'),
+                            'id': entry.get('id', ''),
+                            'url': entry.get('url', ''),
+                            'duration': entry.get('duration', 0),
+                            'uploader': entry.get('uploader', 'Desconhecido')
+                        })
+                
+                return results
+                
+        except Exception as e:
+            st.error(f"Erro na pesquisa: {str(e)}")
+            return []
+    
+    def get_audio_info(self, video_url):
+        """Obtém informações de áudio do vídeo"""
+        try:
+            info_opts = self.ydl_opts.copy()
+            info_opts['quiet'] = True
+            
+            with yt_dlp.YoutubeDL(info_opts) as ydl:
+                info = ydl.extract_info(video_url, download=False)
+                
+                audio_url = None
+                for format in info.get('formats', []):
+                    if format.get('acodec') != 'none' and format.get('vcodec') == 'none':
+                        audio_url = format['url']
+                        break
+                
+                return {
+                    'title': info.get('title', ''),
+                    'audio_url': audio_url,
+                    'duration': info.get('duration', 0),
+                    'thumbnail': info.get('thumbnail', '')
+                }
+                
+        except Exception as e:
+            st.error(f"Erro ao obter informações do áudio: {str(e)}")
+            return None
 
-st.markdown("---")
-st.markdown("<p style='text-align: center;'>Criado com Streamlit, yt-dlp e ffmpeg</p>", unsafe_allow_html=True)
+def main():
+    st.set_page_config(page_title="🎵 Music Player", layout="wide")
+    
+    st.title("🎵 Sistema de Reprodução de Música")
+    st.markdown("---")
+    
+    # Inicializa o player
+    if 'player' not in st.session_state:
+        st.session_state.player = MusicPlayer()
+    
+    # Sidebar para gerenciamento de cookies
+    with st.sidebar:
+        st.header("🍪 Gerenciamento de Cookies")
+        
+        service_options = ['YouTube', 'YouTube Music', 'Spotify', 'Outro']
+        selected_service = st.selectbox("Selecionar Serviço:", service_options)
+        
+        st.subheader("Opções de Cookies:")
+        
+        # Botão para importar cookies do navegador
+        if st.button("📥 Importar do Navegador"):
+            browser = st.selectbox("Navegador:", ['chrome', 'firefox', 'edge'])
+            result = st.session_state.player.cookie_manager.import_browser_cookies(selected_service, browser)
+            if result:
+                st.success("Cookies importados!")
+        
+        # Upload manual de arquivo de cookies
+        st.subheader("📁 Upload Manual")
+        uploaded_file = st.file_uploader("Upload arquivo de cookies (.json ou .txt)", type=['json', 'txt'])
+        
+        if uploaded_file:
+            if uploaded_file.name.endswith('.json'):
+                cookies_data = json.load(uploaded_file)
+                st.session_state.player.cookie_manager.save_cookies(cookies_data, selected_service)
+                st.success("Cookies JSON carregados!")
+            elif uploaded_file.name.endswith('.txt'):
+                # Salva arquivo de cookies Netscape
+                with open(f"cookies_{selected_service.lower()}.txt", "wb") as f:
+                    f.write(uploaded_file.read())
+                st.success("Cookies Netscape carregados!")
+        
+        # Status dos cookies
+        st.subheader("📊 Status dos Cookies")
+        cookies = st.session_state.player.cookie_manager.load_cookies(selected_service)
+        if cookies:
+            st.success(f"✅ Cookies ativos para {selected_service}")
+        else:
+            st.warning(f"❌ Sem cookies para {selected_service}")
+    
+    # Interface principal
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.header("🔍 Pesquisar Música")
+        search_query = st.text_input("Digite o nome da música ou artista:", placeholder="Ex: Imagine Dragons - Believer")
+        
+        if st.button("🔎 Pesquisar"):
+            if search_query:
+                with st.spinner("Pesquisando..."):
+                    # Configura cookies para YouTube se disponível
+                    st.session_state.player.setup_youtube_cookies()
+                    
+                    results = st.session_state.player.search_music(search_query)
+                    st.session_state.search_results = results
+            else:
+                st.warning("Digite algo para pesquisar!")
+        
+        # Exibe resultados da pesquisa
+        if 'search_results' in st.session_state and st.session_state.search_results:
+            st.subheader("📋 Resultados da Pesquisa:")
+            
+            for i, result in enumerate(st.session_state.search_results):
+                with st.expander(f"🎵 {result['title'][:50]}..."):
+                    col_info, col_play = st.columns([3, 1])
+                    
+                    with col_info:
+                        st.write(f"**Artista:** {result['uploader']}")
+                        if result['duration']:
+                            minutes = result['duration'] // 60
+                            seconds = result['duration'] % 60
+                            st.write(f"**Duração:** {minutes}:{seconds:02d}")
+                    
+                    with col_play:
+                        if st.button("▶️ Reproduzir", key=f"play_{i}"):
+                            video_url = f"https://www.youtube.com/watch?v={result['id']}"
+                            
+                            with st.spinner("Carregando áudio..."):
+                                audio_info = st.session_state.player.get_audio_info(video_url)
+                                
+                                if audio_info and audio_info['audio_url']:
+                                    st.session_state.current_song = audio_info
+                                    st.success("✅ Música carregada!")
+                                else:
+                                    st.error("❌ Erro ao carregar música")
+    
+    with col2:
+        st.header("🎵 Player Atual")
+        
+        if 'current_song' in st.session_state:
+            song = st.session_state.current_song
+            
+            if song['thumbnail']:
+                st.image(song['thumbnail'], caption=song['title'])
+            
+            st.write(f"**🎵 Tocando:** {song['title']}")
+            
+            if song['duration']:
+                minutes = song['duration'] // 60
+                seconds = song['duration'] % 60
+                st.write(f"**⏱️ Duração:** {minutes}:{seconds:02d}")
+            
+            # Player de áudio HTML5
+            if song['audio_url']:
+                st.markdown(f"""
+                <audio controls style="width: 100%">
+                    <source src="{song['audio_url']}" type="audio/mpeg">
+                    Seu navegador não suporta o elemento de áudio.
+                </audio>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("🎵 Nenhuma música selecionada")
+            st.markdown("Pesquise e selecione uma música para começar!")
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style='text-align: center'>
+        <p>🎵 Music Player com Sistema de Cookies 🍪</p>
+        <p><small>Desenvolvido com Streamlit e yt-dlp</small></p>
+    </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
